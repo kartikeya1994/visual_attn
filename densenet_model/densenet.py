@@ -171,26 +171,15 @@ class DenseNet(nn.Module):
 
     def forward(self, x):
         features = self.features(x)
-        if self.conv_only:
-            return features
         out = F.relu(features, inplace=True)
-        out = F.avg_pool2d(out, kernel_size=7, stride=1).view(features.size(0), -1)
-        out = self.classifier(out)
+        out = F.avg_pool2d(out, kernel_size=7, stride=1)
+        if not self.conv_only:
+            out = self.classifier(out.view(out.size(0), -1))
         return out
 
 
 class DenseNetAttn(nn.Module):
-    r"""
-    Args:
-        growth_rate (int) - how many filters to add each layer (`k` in paper)
-        block_config (list of 4 ints) - how many layers in each pooling block
-        num_init_features (int) - the number of filters to learn in the first convolution layer
-        bn_size (int) - multiplicative factor for number of bottle neck layers
-          (i.e. bn_size * k features in the bottleneck layer)
-        drop_rate (float) - dropout rate after each dense layer
-        num_classes (int) - number of classification classes
-    """
-    def __init__(self, num_classes=200):
+    def __init__(self, num_classes=200, glimpses=3):
 
         super(DenseNetAttn, self).__init__()
 
@@ -198,22 +187,30 @@ class DenseNetAttn(nn.Module):
         drop_rate = 0
 
         self.conv = densenet121(pretrained=False, conv_only=True)
-
-        # print('Removing batch_norm layer after final conv')
-        # del model.features.norm5
-        print(self.conv)
-
-        num_ftrs = self.conv.classifier.in_features
-        print('Adding FC of 200 output')
+        # output of conv is (s, 1024, 9, 9) for 224 x 224 - 299 x 299
+        # anything else outside this range will fail
+        # TODO: check with ideal input size, if too diff
+        # then there will be lots of zero padding, undesirable...
+        self.fltr_dim = 9
+        self.g = glimpses
+        self.num_fltrs = 1024
         del self.conv.classifier
 
-        # self.attn_fc = nn.Linear(w, num_classes)
+        conv_flat_dim = self.fltr_dim * self.fltr_dim * self.num_fltrs
+        self.attn_fc = nn.Linear(conv_flat_dim, self.conv_dim ** 2 * self.g)
+        self.fc = nn.Linear(self.num_fltrs * self.g, num_classes)
 
 
     def forward(self, x):
-        conv_f = self.conv(x)
-        return conv_f
-        out = F.relu(features, inplace=True)
-        out = F.avg_pool2d(out, kernel_size=7, stride=1).view(features.size(0), -1)
-        out = self.classifier(out)
-        return out
+        conv = self.conv(x)
+        masks = self.attn_fc(conv.view(conv.size(0), -1))
+        masks = F.relu(masks, inplace=True).view(conv.size(0),
+                                    self.g, self.conv_dim, self.conv_dim)
+
+        # TODO: Multiply the masks elementwise with conv
+        conv_attn = ...
+        conv_attn = F.relu(conv_attn, inplace=True)
+
+        y = self.fc(conv_attn.view(out.size(0), -1))
+
+        return y

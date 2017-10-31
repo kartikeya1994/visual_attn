@@ -196,14 +196,15 @@ class DenseNetAttn(nn.Module):
         self.num_fltrs = 1024
         del self.conv.classifier
 
-        self.attn_fc = nn.Linear(self.conv_dim ** 2 * self.num_fltrs,
+        self.attn_fc = nn.Linear(self.num_fltrs,
                                     self.conv_dim ** 2 * self.g)
-        self.fc = nn.Linear(self.num_fltrs * self.g * self.conv_dim ** 2, num_classes)
+        self.fc = nn.Linear(self.num_fltrs * self.g, num_classes)
 
 
     def forward(self, x):
         conv = self.conv(x)
-        masks = self.attn_fc(conv.view(conv.size(0), -1))
+        masks = F.avg_pool2d(conv, kernel_size=conv.size(2), stride=1)
+        masks = self.attn_fc(masks.view(masks.size(0), -1))
         masks = F.relu(masks, inplace=True)
         masks = masks.view(conv.size(0), self.g, 1, self.conv_dim, self.conv_dim)
         # masks is now (s, g, dim, dim) ==> g masks per sample
@@ -217,7 +218,8 @@ class DenseNetAttn(nn.Module):
         masked_act2 = conv * (masks[:, 2, :, :, :])
         masked_acts = torch.cat((masked_act0, masked_act1, masked_act2), 1)
         # masked_acts is (s, filters * g, dim, dim)
-        # flatten and apply softmax
+        # GAP, flatten, and apply softmax
+        masked_acts = F.avg_pool2d(masked_acts, kernel_size=masked_acts.size(2), stride=1)
         y = self.fc(masked_acts.view(masked_acts.size(0), -1))
 
         return y

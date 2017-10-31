@@ -12,6 +12,8 @@ from torchvision import datasets, models, transforms
 import time
 import os
 import sys
+sys.path.append('densenet_model/')
+from densenet import DenseNetAttn
 
 exp_name = sys.argv[0].split('.')[0]
 
@@ -29,7 +31,7 @@ data_transforms = {
     ]),
 }
 
-data_dir = '../../CUB_200_2011/cropped_test'
+data_dir = '../CUB_200_2011/cropped_test'
 image_datasets = {x: datasets.ImageFolder(os.path.join(data_dir, x),
                                           data_transforms[x])
                   for x in ['train', 'validation']}
@@ -108,7 +110,7 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=10):
 
 print('Loading model')
 # Load a pretrained model and reset final fully connected layer.
-
+model_ft = DenseNetAttn()
 model_ft = model_ft.cuda()
 
 criterion = nn.CrossEntropyLoss()

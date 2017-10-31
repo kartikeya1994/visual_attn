@@ -96,7 +96,7 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=10):
             # deep copy the model
             if phase == 'validation' and epoch_acc > best_acc:
                 best_acc = epoch_acc
-                torch.save(model.state_dict(), 
+                torch.save(model.state_dict(),
                         'models/{}_{}_{}.pth'.format(exp_name, epoch, best_acc))
 
         time_elapsed = time.time() - start_time
@@ -108,10 +108,7 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=10):
 
 print('Loading model')
 # Load a pretrained model and reset final fully connected layer.
-model_ft = models.densenet121(pretrained=True)
-num_ftrs = model_ft.classifier.in_features
-print('Adding FC of 200 output')
-model_ft.classifier = nn.Linear(num_ftrs, 200)
+
 model_ft = model_ft.cuda()
 
 criterion = nn.CrossEntropyLoss()
@@ -125,5 +122,3 @@ exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=7, gamma=0.1)
 print('Training')
 model_ft = train_model(model_ft, criterion, optimizer_ft, exp_lr_scheduler,
                        num_epochs=10)
-
-

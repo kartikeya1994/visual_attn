@@ -13,6 +13,8 @@ import time
 import os
 import sys
 
+os.environ["CUDA_VISIBLE_DEVICES"]="0,1"
+
 exp_name = sys.argv[0].split('.')[0]
 
 # Data augmentation and normalization for training
@@ -29,7 +31,7 @@ data_transforms = {
     ]),
 }
 
-data_dir = '../../CUB_200_2011/cropped_test'
+data_dir = '../CUB_200_2011/cropped_vgg16/'
 image_datasets = {x: datasets.ImageFolder(os.path.join(data_dir, x),
                                           data_transforms[x])
                   for x in ['train', 'validation']}
@@ -128,6 +130,6 @@ exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=7, gamma=0.1)
 
 print('Training')
 model_ft = train_model(model_ft, criterion, optimizer_ft, exp_lr_scheduler,
-                       num_epochs=10)
+                       num_epochs=20)
 
 

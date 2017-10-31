@@ -1,3 +1,5 @@
 saved/*
 models/*
 *.pyc
+densenet_model/.ipynb_checkpoints/
+

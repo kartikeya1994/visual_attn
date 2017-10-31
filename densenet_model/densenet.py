@@ -172,8 +172,8 @@ class DenseNet(nn.Module):
     def forward(self, x):
         features = self.features(x)
         out = F.relu(features, inplace=True)
-        out = F.avg_pool2d(out, kernel_size=7, stride=1)
         if not self.conv_only:
+            out = F.avg_pool2d(out, kernel_size=out.size(2), stride=1)
             out = self.classifier(out.view(out.size(0), -1))
         return out
 
@@ -191,26 +191,33 @@ class DenseNetAttn(nn.Module):
         # anything else outside this range will fail
         # TODO: check with ideal input size, if too diff
         # then there will be lots of zero padding, undesirable...
-        self.fltr_dim = 9
+        self.conv_dim = 9
         self.g = glimpses
         self.num_fltrs = 1024
         del self.conv.classifier
 
-        conv_flat_dim = self.fltr_dim * self.fltr_dim * self.num_fltrs
-        self.attn_fc = nn.Linear(conv_flat_dim, self.conv_dim ** 2 * self.g)
-        self.fc = nn.Linear(self.num_fltrs * self.g, num_classes)
+        self.attn_fc = nn.Linear(self.conv_dim ** 2 * self.num_fltrs,
+                                    self.conv_dim ** 2 * self.g)
+        self.fc = nn.Linear(self.num_fltrs * self.g * self.conv_dim ** 2, num_classes)
 
 
     def forward(self, x):
         conv = self.conv(x)
         masks = self.attn_fc(conv.view(conv.size(0), -1))
-        masks = F.relu(masks, inplace=True).view(conv.size(0),
-                                    self.g, self.conv_dim, self.conv_dim)
-
-        # TODO: Multiply the masks elementwise with conv
-        conv_attn = ...
-        conv_attn = F.relu(conv_attn, inplace=True)
-
-        y = self.fc(conv_attn.view(out.size(0), -1))
+        masks = F.relu(masks, inplace=True)
+        masks = masks.view(conv.size(0), self.g, 1, self.conv_dim, self.conv_dim)
+        # masks is now (s, g, dim, dim) ==> g masks per sample
+        # conv is     (s, filters, dim, dim)
+        # masked activations : (s, 1024 * g, dim, dim)
+        masked_act0 = conv * (masks[:, 0, :, :, :])
+        # Broadcast:
+        # (s, filters, dim, dim)
+        # (s, 1, dim, dim)
+        masked_act1 = conv * (masks[:, 1, :, :, :])
+        masked_act2 = conv * (masks[:, 2, :, :, :])
+        masked_acts = torch.cat((masked_act0, masked_act1, masked_act2), 1)
+        # masked_acts is (s, filters * g, dim, dim)
+        # flatten and apply softmax
+        y = self.fc(masked_acts.view(masked_acts.size(0), -1))
 
         return y

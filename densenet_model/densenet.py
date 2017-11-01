@@ -186,7 +186,7 @@ class DenseNetAttn(nn.Module):
         print('Setting drop_rate = 0')
         drop_rate = 0
 
-        self.conv = densenet121(pretrained=False, conv_only=True)
+        self.conv = densenet121(pretrained=True, conv_only=True)
         # output of conv is (s, 1024, 9, 9) for 224 x 224 - 299 x 299
         # anything else outside this range will fail
         # TODO: check with ideal input size, if too diff

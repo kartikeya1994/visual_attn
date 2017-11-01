@@ -46,7 +46,7 @@ use_gpu = True #torch.cuda.is_available()
 # Get a batch of training data
 inputs, classes = next(iter(dataloders['train']))
 
-def train_model(model, criterion, optimizer, scheduler, num_epochs=10):
+def train_model(model, criterion, optimizer, scheduler, num_epochs=20):
     best_acc = 0.0
     for epoch in range(num_epochs):
         start_time = time.time()
@@ -123,4 +123,4 @@ exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=7, gamma=0.1)
 
 print('Training')
 model_ft = train_model(model_ft, criterion, optimizer_ft, exp_lr_scheduler,
-                       num_epochs=10)
+                       num_epochs=20)

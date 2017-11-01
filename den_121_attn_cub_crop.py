@@ -41,7 +41,7 @@ dataloders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=4,
 dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'validation']}
 class_names = image_datasets['train'].classes
 
-use_gpu = True #torch.cuda.is_available()
+use_gpu = torch.cuda.is_available()
 
 # Get a batch of training data
 inputs, classes = next(iter(dataloders['train']))
@@ -69,8 +69,12 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=20):
                 inputs, labels = data
 
                 # wrap them in Variable
-                inputs = Variable(inputs.cuda())
-                labels = Variable(labels.cuda())
+                if use_gpu:
+                    inputs = Variable(inputs.cuda())
+                    labels = Variable(labels.cuda())
+                else:
+                    inputs = Variable(inputs)
+                    labels = Variable(labels)
 
                 # zero the parameter gradients
                 optimizer.zero_grad()
@@ -111,7 +115,8 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=20):
 print('Loading model')
 # Load a pretrained model and reset final fully connected layer.
 model_ft = DenseNetAttn()
-model_ft = model_ft.cuda()
+if use_gpu:
+    model_ft = model_ft.cuda()
 
 criterion = nn.CrossEntropyLoss()
 

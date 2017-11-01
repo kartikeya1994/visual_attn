@@ -29,16 +29,15 @@ def densenet121(pretrained=False, **kwargs):
     return model
 
 
-def densenet121_attn():
-    print('Removing batch_norm layer after final conv')
-    model = densenet121(pretrained=True)
-
-    print('Deleting batch_norm after last conv')
-    del model.features.norm5
-
-    num_ftrs = model.classifier.in_features
-    print('Adding FC of 200 output')
-    model.classifier = nn.Linear(num_ftrs, 200)
+def densenet121_attn(weights=None, num_classes=200, mask_only=False):
+    if weights is not None:
+        base_pretrained = False
+    else:
+        base_pretrained = True
+    model = DenseNetAttn(num_classes=200, base_pretrained=base_pretrained, mask_only=mask_only)
+    if weights is not None:
+        w = torch.load(weights)
+        model.load_state_dict(w)
     return model
 
 
@@ -136,7 +135,8 @@ class DenseNet(nn.Module):
         num_classes (int) - number of classification classes
     """
     def __init__(self, growth_rate=32, block_config=(6, 12, 24, 16),
-                 num_init_features=64, bn_size=4, drop_rate=0, num_classes=1000, conv_only=False):
+                 num_init_features=64, bn_size=4, drop_rate=0,
+                 num_classes=1000, conv_only=False):
 
         super(DenseNet, self).__init__()
         self.conv_only = conv_only
@@ -179,14 +179,15 @@ class DenseNet(nn.Module):
 
 
 class DenseNetAttn(nn.Module):
-    def __init__(self, num_classes=200, glimpses=3):
+    def __init__(self, num_classes=200, glimpses=3, base_pretrained=True,
+                    mask_only=False):
 
         super(DenseNetAttn, self).__init__()
 
         print('Setting drop_rate = 0')
         drop_rate = 0
 
-        self.conv = densenet121(pretrained=True, conv_only=True)
+        self.conv = densenet121(pretrained=base_pretrained, conv_only=True)
         # output of conv is (s, 1024, 9, 9) for 224 x 224 - 299 x 299
         # anything else outside this range will fail
         # TODO: check with ideal input size, if too diff
@@ -216,6 +217,8 @@ class DenseNetAttn(nn.Module):
         # (s, 1, dim, dim)
         masked_act1 = conv * (masks[:, 1, :, :, :])
         masked_act2 = conv * (masks[:, 2, :, :, :])
+        if self.mask_only:
+            return masked_act0, masked_act1, masked_act2
         masked_acts = torch.cat((masked_act0, masked_act1, masked_act2), 1)
         # masked_acts is (s, filters * g, dim, dim)
         # GAP, flatten, and apply softmax

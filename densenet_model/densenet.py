@@ -183,7 +183,7 @@ class DenseNetAttn(nn.Module):
                     mask_only=False):
 
         super(DenseNetAttn, self).__init__()
-
+        self.mask_only = mask_only
         print('Setting drop_rate = 0')
         drop_rate = 0
 
@@ -211,14 +211,16 @@ class DenseNetAttn(nn.Module):
         # masks is now (s, g, dim, dim) ==> g masks per sample
         # conv is     (s, filters, dim, dim)
         # masked activations : (s, 1024 * g, dim, dim)
+        
+        if self.mask_only:
+            return masks[:, 0, :, :, :], masks[:, 1, :, :, :], masks[:, 2, :, :,:]
         masked_act0 = conv * (masks[:, 0, :, :, :])
         # Broadcast:
         # (s, filters, dim, dim)
         # (s, 1, dim, dim)
         masked_act1 = conv * (masks[:, 1, :, :, :])
         masked_act2 = conv * (masks[:, 2, :, :, :])
-        if self.mask_only:
-            return masked_act0, masked_act1, masked_act2
+        
         masked_acts = torch.cat((masked_act0, masked_act1, masked_act2), 1)
         # masked_acts is (s, filters * g, dim, dim)
         # GAP, flatten, and apply softmax

@@ -177,7 +177,21 @@ class DenseNet(nn.Module):
             out = self.classifier(out.view(out.size(0), -1))
         return out
 
+"""
+Predict 3 k x k masks and multiply elementwise
+with output of conv to get f'. Apply FC + softmax.
 
+img -> CONV -> f -> FC -> masks
+               |            |
+               |            |
+               +------------+
+                      | (elementwise mul)
+                      v
+                      f'
+                      |
+                      v
+                 FC + softmax
+"""
 class DenseNetAttn(nn.Module):
     def __init__(self, num_classes=200, glimpses=3, base_pretrained=True,
                     mask_only=False):
@@ -228,3 +242,90 @@ class DenseNetAttn(nn.Module):
         y = self.fc(masked_acts.view(masked_acts.size(0), -1))
 
         return y
+
+"""
+Predict 3 glimpses g = (p1_x, p1_y, p2_x, p2_y)
+Crop img using boxcar func. 
+Upsample using bilinear interpolation
+FC + softmax
+
+img -> CONV1 -> f -> FC ->   g
+ |                          |
+ |                          |
+ +------------+-------------+
+              | (crop using boxcar)
+              v
+
+        c1    c2   c3
+
+              | (bilinear upsampling)
+              v
+
+        C1    C2   C3
+
+         |    |    |
+         v    v    v
+
+            CONV2
+
+              |
+              v
+            
+          FC + softmax
+"""
+
+class DenseNetAttn_RACNN(nn.Module):
+    def __init__(self, num_classes=200, glimpses=2, base_pretrained=True,
+                    glimpse_only=False):
+        """
+        glimpse_only: return glimpses of dim (s, g, x.shape)
+        base_pretrained: load Imagenet weights for CNNs
+        glimpses: number of glimpses
+        """
+        super(DenseNetAttn_RACNN, self).__init__()
+        
+        self.glimpse_only = glimpse_only
+        self.num_fltrs = 1024 # num filters in output of conv
+        self.glimpse_dim = 4 # tl_x, tl_y, br_x, br_y
+        self.g = glimpses # number of glimpses
+        self.num_classes = num_classes
+
+        self.conv1 = densenet121(pretrained=base_pretrained, conv_only=True)
+        # apply GAP to conv1
+        self.glimpse_fc = nn.Linear(self.num_fltrs, self.glimpse_dim * self.g)
+        self.cropper = 0
+        self.conv2 = densenet121(pretrained=base_pretrained, conv_only=True)
+        # apply GAP to conv2
+        # concat output of conv2 across glimpses
+        # hence we have vector of size num_fltrs * g
+        self.fc1 = nn.Linear(self.num_fltrs * self.g, self.num_fltrs/2)
+        self.fc2 = nn.Linear(self.num_fltrs/2, self.num_classes)
+        # delete original fc
+        del self.conv1.classifier
+        del self.conv2.classifier
+
+    def forward(self, x):
+        # input shape is: (s, c, H, W)
+        s = x.size(0) # num samples
+        c = x.size(1) # num channels
+        H = x.size(2) # img height
+        W = x.size(3) # img width
+
+        f = self.conv1(x) # (s, num_fltrs, d, d)
+        f = F.avg_pool2d(f, kernel_size=f.size(2), stride=1) # GAP
+        f = f.view(s, self.num_fltrs)
+        f = self.glimpse_fc(f)
+        f = f.view(s, self.g, self.glimpse_dim)
+        glimpses = self.cropper(x, f) # (s, g, x.shape)
+        
+        if self.glimpses_only:
+            return glimpses
+        
+        glimpses = glimpses.view(s*self.g, self.num_channels, H, W)
+        f = self.conv2(glimpses) # (s*g, num_fltrs, d, d)
+        f = F.avg_pool2d(f, kernel_size=f.size(2), stride=1) # GAP  
+        f = f.view(s, self.g * self.num_fltrs)
+        f = self.fc1(f)
+        f = F.relu(f, inplace=True)
+        f = self.fc2(f)
+        return f

@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.model_zoo as model_zoo
 from collections import OrderedDict
-
+from utils import BoxCar, Upsampler
 __all__ = ['DenseNet', 'densenet121', 'densenet169', 'densenet201', 'densenet161']
 
 
@@ -40,6 +40,17 @@ def densenet121_attn(weights=None, num_classes=200, mask_only=False):
         model.load_state_dict(w)
     return model
 
+def densenet121_attn_racnn(weights=None, num_classes=200, glimpse_only=False):
+    if weights is not None:
+        base_pretrained = False
+    else:
+        base_pretrained = True
+    model = DenseNetAttn_RACNN(num_classes=200, base_pretrained=base_pretrained,
+            glimpse_only=glimpse_only)
+    if weights is not None:
+        w = torch.load(weights)
+        model.load_state_dict(w)
+    return model
 
 def densenet169(pretrained=False, **kwargs):
     r"""Densenet-169 model from
@@ -276,7 +287,7 @@ img -> CONV1 -> f -> FC ->   g
 
 class DenseNetAttn_RACNN(nn.Module):
     def __init__(self, num_classes=200, glimpses=2, base_pretrained=True,
-                    glimpse_only=False):
+                    glimpse_only=False, num_channels=3):
         """
         glimpse_only: return glimpses of dim (s, g, x.shape)
         base_pretrained: load Imagenet weights for CNNs
@@ -286,14 +297,16 @@ class DenseNetAttn_RACNN(nn.Module):
         
         self.glimpse_only = glimpse_only
         self.num_fltrs = 1024 # num filters in output of conv
-        self.glimpse_dim = 4 # tl_x, tl_y, br_x, br_y
+        self.glimpse_dim = 4 # tl_x, tl_y, h, w btw 0,1
         self.g = glimpses # number of glimpses
         self.num_classes = num_classes
+        self.num_channels = num_channels
 
         self.conv1 = densenet121(pretrained=base_pretrained, conv_only=True)
         # apply GAP to conv1
         self.glimpse_fc = nn.Linear(self.num_fltrs, self.glimpse_dim * self.g)
-        self.cropper = 0
+        self.cropper = BoxCar()
+        self.upsampler = Upsampler()
         self.conv2 = densenet121(pretrained=base_pretrained, conv_only=True)
         # apply GAP to conv2
         # concat output of conv2 across glimpses
@@ -303,6 +316,27 @@ class DenseNetAttn_RACNN(nn.Module):
         # delete original fc
         del self.conv1.classifier
         del self.conv2.classifier
+    
+    def convert_bb(self, f, H=299, W=299):
+        """
+        f: (s, g, 4) tl_x tl_y h w (all btw 0 and 1)
+        Network predicts top left corner, width and height
+        """
+
+        # scale to img dimensions
+        f[:, :, 0] = f[:, :, 0]*H
+        f[:, :, 1] = f[:, :, 1]*W
+        f[:, :, 2] = f[:, :, 2]*H
+        f[:, :, 3] = f[:, :, 3]*W
+
+        # compute br_x and br_y
+        # clip them to H and W resp
+        f[:, :, 2] = f[:, :, 0] + f[:, :, 2]
+        f[:, :, 2] = torch.clamp(f[:, :, 2], max=H)
+        f[:, :, 3] = f[:, :, 1] + f[:, :, 3]
+        f[:, :, 3] = torch.clamp(f[:, :, 3], max=W)
+
+        return f.long()
 
     def forward(self, x):
         # input shape is: (s, c, H, W)
@@ -316,16 +350,19 @@ class DenseNetAttn_RACNN(nn.Module):
         f = f.view(s, self.num_fltrs)
         f = self.glimpse_fc(f)
         f = f.view(s, self.g, self.glimpse_dim)
+        f = torch.sigmoid(f) # must be btw 0,1
+        f = self.convert_bb(f)
         glimpses = self.cropper(x, f) # (s, g, x.shape)
-        
-        if self.glimpses_only:
+        glimpses = self.upsampler(x, f)
+        if self.glimpse_only:
             return glimpses
         
-        glimpses = glimpses.view(s*self.g, self.num_channels, H, W)
-        f = self.conv2(glimpses) # (s*g, num_fltrs, d, d)
+        f = glimpses.view(s*self.g, self.num_channels, H, W)
+        f = self.conv2(f) # (s*g, num_fltrs, d, d)
         f = F.avg_pool2d(f, kernel_size=f.size(2), stride=1) # GAP  
-        f = f.view(s, self.g * self.num_fltrs)
+        # now we have (s*g, num_fltrs)
+        f = f.view(s, self.g * self.num_fltrs) #flatten for FC
         f = self.fc1(f)
         f = F.relu(f, inplace=True)
         f = self.fc2(f)
-        return f
+        return f, glimpses

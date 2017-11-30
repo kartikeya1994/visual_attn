@@ -149,7 +149,7 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=20):
 
 print('Loading model')
 # Load a pretrained model and reset final fully connected layer.
-model_ft = densenet121_attn_racnn() 
+model_ft = densenet121_attn_racnn(freeze_conv1=True, freeze_conv2=True) 
 
 if use_gpu:
     model_ft = model_ft.cuda()
@@ -157,7 +157,7 @@ if use_gpu:
 criterion = nn.CrossEntropyLoss()
 
 # Observe that all parameters are being optimized
-optimizer_ft = optim.SGD(model_ft.parameters(), lr=0.001, momentum=0.9)
+optimizer_ft = optim.SGD(filter(lambda p:p.requires_grad, model_ft.parameters()), lr=0.001, momentum=0.9)
 
 # Decay LR by a factor of 0.1 every 7 epochs
 exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=7, gamma=0.1)
@@ -166,4 +166,4 @@ end = time.time()
 print("Took {}s".format(end-start))
 print('Training')
 model_ft = train_model(model_ft, criterion, optimizer_ft, exp_lr_scheduler,
-                       num_epochs=100)
+                       num_epochs=60)

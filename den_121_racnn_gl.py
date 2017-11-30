@@ -15,13 +15,14 @@ import math
 import sys
 from tqdm import tqdm
 sys.path.append('densenet_model/')
-from densenet import densenet121_attn_racnn
+from densenet import densenet121_racnn_gl, DenseNet_RACNN_GL
 import matplotlib as plt
 plt.use('Agg')
 
 start = time.time()
 exp_name = sys.argv[0].split('.')[0]
 IMG_H, IMG_W = 299, 299
+num_glimpses = 2
 
 # Data augmentation and normalization for training
 # Just normalization for validation
@@ -115,10 +116,18 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=20):
                 optimizer.zero_grad()
 
                 # forward
-                outputs, glimpses = model(inputs)
-                _, preds = torch.max(outputs.data, 1)
-                loss = criterion(outputs, labels)
-
+                p, p_gl = model(inputs)
+                # p is (s, 200)
+                # p_gl is (sg, 200)
+                _, preds = torch.max(p.data, 1)
+                
+                labels_gl = labels.repeat(num_glimpses,
+                                1).t().contiguous().view(num_glimpses*p.size(0))
+                
+                l = criterion(p, labels)
+                l_gl = criterion(p_gl, labels_gl)
+                loss = l + l_gl
+                
                 # backward + optimize only if in training phase
                 if phase == 'train':
                     loss.backward()
@@ -149,7 +158,7 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=20):
 
 print('Loading model')
 # Load a pretrained model and reset final fully connected layer.
-model_ft = densenet121_attn_racnn() 
+model_ft = densenet121_racnn_gl() 
 
 if use_gpu:
     model_ft = model_ft.cuda()

@@ -15,7 +15,7 @@ import math
 import sys
 from tqdm import tqdm
 sys.path.append('densenet_model/')
-from densenet import densenet121_attn_racnn
+from densenet_with_crops import densenet121_racnn_crops
 import matplotlib as plt
 plt.use('Agg')
 
@@ -38,7 +38,7 @@ data_transforms = {
 }
 
 # for cropped data_dir = '../CUB_200_2011/cropped_test'
-data_dir = '../CUB_200_2011/cub_299_299'
+data_dir = '../CUB_200_2011/cub_cropped_299_299'
 image_datasets = {x: datasets.ImageFolder(os.path.join(data_dir, x),
                                           data_transforms[x])
                   for x in ['train', 'validation']}
@@ -149,7 +149,7 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=20):
 
 print('Loading model')
 # Load a pretrained model and reset final fully connected layer.
-model_ft = densenet121_attn_racnn() 
+model_ft = densenet121_racnn_crops() 
 
 if use_gpu:
     model_ft = model_ft.cuda()

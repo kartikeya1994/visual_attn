@@ -63,30 +63,6 @@ def densenet121_racnn(weights=None, num_classes=200, glimpse_only=False,
     
     return model
 
-def densenet121_racnn_gl(weights=None, num_classes=200, glimpse_only=False,
-        freeze_conv1=False, freeze_conv2=False, use_gpu=True):
-    if weights is not None:
-        base_pretrained = False
-    else:
-        base_pretrained = True
-    model = DenseNet_RACNN_GL(num_classes=200, base_pretrained=base_pretrained,
-            use_gpu=use_gpu)
-    
-    if freeze_conv1:
-        for param in model.glimpse.conv1.parameters():
-            param.requires_grad = False
-   
-    if freeze_conv2:
-        for param in model.conv2.parameters():
-            param.requires_grad = False
-
-    if weights is not None:
-        w = torch.load(weights)
-        model.load_state_dict(w)
-    
-    return model
-
-
 def densenet169(pretrained=False, **kwargs):
     r"""Densenet-169 model from
     `"Densely Connected Convolutional Networks" <https://arxiv.org/pdf/1608.06993.pdf>`_
@@ -363,52 +339,3 @@ class DenseNet_RACNN(nn.Module):
         f = F.relu(f, inplace=True)
         f = self.fc2(f)
         return f, glimpses
-
-
-
-class DenseNet_RACNN_GL(nn.Module):
-    def __init__(self, num_classes=200, glimpses=2, base_pretrained=True,
-             num_channels=3, use_gpu=True):
-        """
-        glimpse_only: return glimpses of dim (s, g, x.shape)
-        base_pretrained: load Imagenet weights for CNNs
-        glimpses: number of glimpses
-        """
-        super(DenseNet_RACNN_GL, self).__init__()
-        
-        self.num_fltrs = 1024 # num filters in output of conv
-        self.glimpse_dim = 4 # tl_x, tl_y, h, w btw 0,1
-        self.g = glimpses # number of glimpses
-        self.num_classes = num_classes
-        self.num_channels = num_channels
-
-        self.glimpse = densenet121_racnn_glimpse_extractor(use_gpu=use_gpu)
-        self.conv2 = densenet121(pretrained=base_pretrained, conv_only=True)
-        # apply GAP to conv2
-        # concat output of conv2 across glimpses
-        # hence we have vector of size num_fltrs * g
-        self.fc1 = nn.Linear(self.num_fltrs, self.num_classes)
-        self.fc2 = nn.Linear(self.g * self.num_classes, self.num_classes)
-        # delete original fc
-        del self.conv2.classifier
-    
-    def forward(self, x):
-        # input shape is: (s, c, H, W)
-        s = x.size(0) # num samples
-        c = x.size(1) # num channels
-        H = x.size(2) # img height
-        W = x.size(3) # img width
-
-        f = self.glimpse(x) 
-        f = f.view(s*self.g, self.num_channels, H, W)
-        f = self.conv2(f) # (s*g, num_fltrs, d, d)
-        f = F.avg_pool2d(f, kernel_size=f.size(2), stride=1) # GAP  
-        
-        ## We apply fc1 to convert s*g x 1024 -> s*g x 200
-        f = f.view(s*self.g, self.num_fltrs)
-        f_gl = self.fc1(f)
-        ## We first view s*g x 200 as s x g*200
-        ## fc2 maps s x g*200 -> s x 200
-        f = f_gl.view(s, self.g*self.num_classes)
-        f = self.fc2(f)
-        return f, f_gl # (s, 200), (s*g, 200)

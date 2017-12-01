@@ -158,7 +158,7 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=20):
 
 print('Loading model')
 # Load a pretrained model and reset final fully connected layer.
-model_ft = densenet121_racnn_gl(use_gpu=use_gpu) 
+model_ft = densenet121_racnn_gl(use_gpu=use_gpu, gap=False) 
 
 if use_gpu:
     model_ft = model_ft.cuda()

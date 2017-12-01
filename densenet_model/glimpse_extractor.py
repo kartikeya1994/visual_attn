@@ -29,13 +29,13 @@ def densenet121(pretrained=False, **kwargs):
     return model
 
 def densenet121_racnn_glimpse_extractor(weights=None, num_classes=200, 
-        freeze_conv1=False, gap=False, use_gpu=True):
+        freeze_conv1=False, gap=False, use_gpu=True, up=True):
     if weights is not None:
         base_pretrained = False
     else:
         base_pretrained = True
     model = DenseNet_RACNN_Glimpse_Extractor(num_classes=200,
-            base_pretrained=base_pretrained, use_gpu=use_gpu)
+            base_pretrained=base_pretrained, use_gpu=use_gpu, up=up)
     
     if freeze_conv1:
         for param in model.conv1.parameters():
@@ -206,7 +206,7 @@ img -> CONV1 -> f -> FC ->   g
 """
 class DenseNet_RACNN_Glimpse_Extractor(nn.Module):
     def __init__(self, num_classes=200, glimpses=2, base_pretrained=True,
-            num_channels=3, conv_dim = 9, gap=False, use_gpu=True):
+            num_channels=3, conv_dim = 9, gap=False, use_gpu=True, up=True):
         """
         glimpse_only: return glimpses of dim (s, g, x.shape)
         base_pretrained: load Imagenet weights for CNNs
@@ -221,6 +221,7 @@ class DenseNet_RACNN_Glimpse_Extractor(nn.Module):
         self.num_channels = num_channels
         self.conv_dim = conv_dim
         self.gap = gap
+        self.up = up
 
         self.conv1 = densenet121(pretrained=base_pretrained, conv_only=True)
         if gap:
@@ -228,8 +229,9 @@ class DenseNet_RACNN_Glimpse_Extractor(nn.Module):
         else:
             self.glimpse_fc = nn.Linear(self.num_fltrs * conv_dim * conv_dim, self.glimpse_dim * self.g)
         
-        # upsample sz: self.cropper = BoxCar(use_gpu=use_gpu)
-        self.upsampler = Upsampler(set_zero=True)
+        self.cropper = BoxCar(use_gpu=use_gpu)
+        # upsample sz self.upsampler = Upsampler(set_zero=True)
+        self.upsampler = Upsampler()
         # delete original fc
         del self.conv1.classifier
     
@@ -278,6 +280,8 @@ class DenseNet_RACNN_Glimpse_Extractor(nn.Module):
         f = f.view(s, self.g, self.glimpse_dim)
         # wo clip f = torch.sigmoid(f) # must be btw 0,1
         f = self.convert_bb(f)
-        #upsample sz: glimpses = self.cropper(x, f) # (s, g, x.shape)
-        glimpses = self.upsampler(x, f)
+        glimpses = self.cropper(x, f) # (s, g, x.shape)
+        # upsample sz glimpses = self.upsampler(x, f)
+        if self.up:
+            glimpses = self.upsampler(glimpses, f)
         return glimpses

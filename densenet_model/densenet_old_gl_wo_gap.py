@@ -40,14 +40,14 @@ def densenet121_attn(weights=None, num_classes=200, mask_only=False):
         model.load_state_dict(w)
     return model
 
-def densenet121_old_gl_wo_gap(weights=None, num_classes=200, glimpse_only=False,
+def densenet121_old_gl_wo_gap(weights=None, num_classes=200, mask_only=False,
         freeze_conv1=False, freeze_conv2=False, use_gpu=True):
     if weights is not None:
         base_pretrained = False
     else:
         base_pretrained = True
     model = DenseNetAttn_GL_woGAP(num_classes=200, base_pretrained=base_pretrained,
-            use_gpu=use_gpu)
+            use_gpu=use_gpu, mask_only=mask_only)
 
     if freeze_conv1:
         for param in model.glimpse.conv1.parameters():
@@ -205,7 +205,7 @@ class DenseNetAttn_GL_woGAP(nn.Module):
     def __init__(self, num_classes=200, glimpses=3, base_pretrained=True,
                     mask_only=False, use_gpu=True):
 
-        super(DenseNet_OLD_RACNN_GL, self).__init__()
+        super(DenseNetAttn_GL_woGAP, self).__init__()
         self.mask_only = mask_only
         print('Setting drop_rate = 0')
         drop_rate = 0
@@ -230,7 +230,7 @@ class DenseNetAttn_GL_woGAP(nn.Module):
         s = x.size(0)
         conv = self.conv(x)
         #masks = F.avg_pool2d(conv, kernel_size=conv.size(2), stride=1)
-        masks = self.attn_fc(masks.view(masks.size(0), -1))
+        masks = self.attn_fc(conv.view(conv.size(0), -1))
         masks = F.relu(masks, inplace=True)
         masks = masks.view(conv.size(0), self.g, 1, self.conv_dim, self.conv_dim)
         # masks is now (s, g, dim, dim) ==> g masks per sample

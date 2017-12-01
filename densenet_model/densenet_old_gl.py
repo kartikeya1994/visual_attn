@@ -40,14 +40,14 @@ def densenet121_attn(weights=None, num_classes=200, mask_only=False):
         model.load_state_dict(w)
     return model
 
-def densenet121_old_racnn_gl(weights=None, num_classes=200, glimpse_only=False,
-        freeze_conv1=False, freeze_conv2=False, use_gpu=True):
+def densenet121_attn_gl(weights=None, num_classes=200, glimpse_only=False,
+        freeze_conv1=False, freeze_conv2=False, use_gpu=True, mask_only=False):
     if weights is not None:
         base_pretrained = False
     else:
         base_pretrained = True
-    model = DenseNet_OLD_RACNN_GL(num_classes=200, base_pretrained=base_pretrained,
-            use_gpu=use_gpu)
+    model = DenseNet_ATTN_GL(num_classes=200, base_pretrained=base_pretrained,
+            use_gpu=use_gpu, mask_only=mask_only)
 
     if freeze_conv1:
         for param in model.glimpse.conv1.parameters():
@@ -201,11 +201,11 @@ class DenseNet(nn.Module):
         return out
 
 
-class DenseNet_OLD_RACNN_GL(nn.Module):
+class DenseNet_ATTN_GL(nn.Module):
     def __init__(self, num_classes=200, glimpses=3, base_pretrained=True,
                     mask_only=False, use_gpu=True):
 
-        super(DenseNet_OLD_RACNN_GL, self).__init__()
+        super(DenseNet_ATTN_GL, self).__init__()
         self.mask_only = mask_only
         print('Setting drop_rate = 0')
         drop_rate = 0

@@ -5,17 +5,21 @@ import torch.utils.model_zoo as model_zoo
 from collections import OrderedDict
 import numpy as np
 from torch.autograd import Variable, Function
-
+import time
 
 class BoxCarFunc(Function):
     
     def h(self, x):
-        k=100000
+        k=0.05
+        return 1.0/(1.0 + torch.exp(-k * x))
+    '''
+    def h_b(self, x):
+        k=0.9
         return 1.0/(1.0 + np.exp(-k * x))
-    
+    '''
     def diff_h(self, x):
-        k=100000
-        return k * np.exp(-k * x) * self.h(x) ** 2
+        k=0.05
+        return k * torch.exp(-k * x) * self.h(x) ** 2
 
     def forward(self, x, m, f1, f2, use_gpu):
         '''
@@ -24,7 +28,7 @@ class BoxCarFunc(Function):
             returns - s x g x ch x dim1 x dim2
         '''
 
-        self.save_for_backward(x, m, use_gpu)
+        self.save_for_backward(x, m, use_gpu, f1, f2)
         
         s = x.size(0)
         ch = x.size(1)
@@ -48,51 +52,101 @@ class BoxCarFunc(Function):
         # dL_dg: (s, g, 3, 299, 299)
         # self.x: (s, 3, 299, 299)
         # self.m: (s, g, 4)
-        print('dim dl_dg:', dL_dg.size())
-        
-        x, m, use_gpu = self.saved_tensors
-        g = m.size(1)
-        
+        dL_dg = torch.abs(dL_dg)
+        max_val = torch.max(dL_dg)
+        if max_val:
+            dL_dg = dL_dg / torch.max(dL_dg) * 0.0000001
+        #print('Max Before:', torch.max(dL_dg), "Min Before: ", torch.min(dL_dg))
+        x, M, use_gpu, I, J = self.saved_tensors
+        g = M.size(1)
         s = x.size(0)
-        dL_dm = Variable(torch.zeros(s, g, 4)) # output
-        if True:#use_gpu: 
-            dL_dm = dL_dm.cuda()
+        c = x.size(1)
+        D = x.size(2)
+
+        I = I[:,:,0,:,:].view(1,1,1,D).float()
+        J = J[:,:,0,:,:].view(1,1,D,1).float()
+        x = x.view(s,1,c,D,D)
+        M = M.view(s,g,4,1,1).float()
+
+        # m0
+        t3 = self.diff_h(I - M[:,:,0,:,:]) # s,g,1,D
+        t2 = self.h(J + -1* M[:,:,1,:,:]) - self.h(J + -1*M[:,:,3,:]) #s,g,D,1
+        t23 = torch.matmul(t2, t3) # s,g,D,D
+        dL_dm0 = dL_dg * x * t23.view(s,g,1,D,D) # s,g,c,D,D
+        dL_dm0 = dL_dm0.view(s,g,-1).sum(2) * -1 # s,g
+        
+        # m1
+        t3 = self.diff_h(I - M[:,:,1,:,:])
+        t2 = self.h(J - M[:,:,0,:,:] - self.h(J) - M[:,:,2,:,:])
+        t23 = torch.matmul(t2, t3)
+        dL_dm1 = dL_dg * x.view(s,1,c, D, D) * t23.view(s,g,1,D,D)
+        dL_dm1 = dL_dm1.view(s,g,-1).sum(2) * -1
+        
+        # m2
+        t3 = self.diff_h(I - M[:,:,2,:,:])
+        t2 = self.h(J - M[:,:,1,:,:]) - self.h(J - M[:,:,3,:,:])
+        t23 = torch.matmul(t2, t3)
+        dL_dm2 = dL_dg * x.view(s,1,c, D, D) * t23.view(s,g,1,D,D)
+        dL_dm2 = dL_dm2.view(s,g,-1).sum(2)
+        
+        # m3
+        t3 = self.diff_h(I - M[:,:,3,:,:])
+        t2 = self.h(J - M[:,:,0,:,:]) - self.h(J - M[:,:,2,:,:])
+        t23 = torch.matmul(t2, t3)
+        dL_dm3 = dL_dg * x.view(s,1,c, D, D) * t23.view(s,g,1,D,D)
+        dL_dm3 = dL_dm3.view(s,g,-1).sum(2)
+        
+        dL_dm = torch.stack([dL_dm0, dL_dm1, dL_dm2, dL_dm3], dim=2)
+        dL_dm = dL_dm
+        #print('Max Post:', torch.max(dL_dm), "Min Post: ", torch.min(dL_dm))
+        """
+        dL_dm = torch.zeros(s, g, 4) # output
+        #if True:#use_gpu: 
+        #    dL_dm = dL_dm.cuda()
 
         for s_i in range(s): # loop over samples
+            s1 = time.time()
             for g_i in range(g): # loop over each glimpse
+                s2 = time.time()
                 for c in range(x.size(1)): # loop over channels
+                    s3 = time.time()
                     for i in range(x.size(2)): 
                         for j in range(x.size(3)):
-                            t_1 = x[s_i][c][i][j]
-                            t_2 = self.h(j-m[s_i][g_i][1]) - self.h(j-m[s_i][g_i][3])
-                            t_3 = -1 * self.diff_h(i-m[s_i][g_i][0])
+                            #print "S_N: ", s_i, "G_N", g_i, "C_N", c, "I: ", i, "J: ", j
+                            t_1 = x[s_i, c, i, j]
+                            t_2 = self.h_b(j-m[s_i, g_i, 1]) - self.h_b(j-m[s_i, g_i, 3])
+                            t_3 = -1 * self.diff_h(i-m[s_i, g_i, 0])
                             dg = t_1 * t_2 * t_3
-                            dL_dm[s_i][g_i][0] = dL_dm[s_i][g_i][0] + dL_dg[s_i][g_i][c][i][j] * dg
+                            dL_dm[s_i, g_i, 0] = dL_dm[s_i, g_i, 0] + dL_dg[s_i, g_i, c, i, j] * dg
 
-                            t_2 = self.h(i-m[s_i][g_i][0]) - self.h(i-m[s_i][g_i][2])
-                            t_3 = -1 * self.diff_h(j-m[s_i][g_i][1])
+                            t_2 = self.h_b(i-m[s_i, g_i, 0]) - self.h_b(i-m[s_i, g_i, 2])
+                            t_3 = -1 * self.diff_h(j-m[s_i, g_i, 1])
                             dg = t_1 * t_2 * t_3
-                            dL_dm[s_i][g_i][1] = dL_dm[s_i][g_i][1] + dL_dg[s_i][g_i][c][i][j] * dg 
+                            dL_dm[s_i, g_i, 1] = dL_dm[s_i, g_i, 1] + dL_dg[s_i, g_i, c, i, j] * dg 
 
-                            t_2 = self.h(j-m[s_i][g_i][1]) - self.h(j-m[s_i][g_i][3])
-                            t_3 = self.diff_h(i-m[s_i][g_i][2])
+                            t_2 = self.h_b(j-m[s_i, g_i, 1]) - self.h_b(j-m[s_i, g_i, 3])
+                            t_3 = self.diff_h(i-m[s_i, g_i, 2])
                             dg = t_1 * t_2 * t_3
-                            dL_dm[s_i][g_i][2] = dL_dm[s_i][g_i][2] +  dL_dg[s_i][g_i][c][i][j] * dg
+                            dL_dm[s_i, g_i, 2] = dL_dm[s_i, g_i, 2] + dL_dg[s_i, g_i, c, i, j] * dg
 
-                            t_2 = self.h(i-m[s_i][g_i][0]) - self.h(i-m[s_i][g_i][2])
-                            t_3 = self.diff_h(i-m[s_i][g_i][3])
+                            t_2 = self.h_b(i-m[s_i, g_i, 0]) - self.h_b(i-m[s_i, g_i, 2])
+                            t_3 = self.diff_h(i-m[s_i, g_i, 3])
                             dg = t_1 * t_2 * t_3
-                            dL_dm[s_i][g_i][3] = dL_dm[s_i][g_i][3] + dL_dg[s_i][g_i][c][i][j] * dg
+                            dL_dm[s_i, g_i, 3] = dL_dm[s_i, g_i, 3] + dL_dg[s_i, g_i, c, i, j] * dg
+                    print("Channel: ", c, "glimpse: ", g_i, "sample: ", s_i, "took ", (time.time() - s3), "seconds")
+                print("Glimpse: ", g_i, "sample: ", s_i, "took", (time.time() - s2), "seconds")
+            print("Sample: ", s_i, "took ", (time.time() - s1), "seconds")
+        """
         # x, m, f1, f2, use_gpu
         return None, dL_dm, None, None, None
 
 class BoxCar(nn.Module):
     def __init__(self, ch=3, dim1=299, dim2=299, use_gpu=True):
         super(BoxCar, self).__init__()
-        f1 = torch.from_numpy(np.arange(dim1)).view(1, 1, 1, dim1, -1)
-        f2 = torch.from_numpy(np.arange(dim2)).view(1, 1, 1, 1, -1)
-        z1 = torch.zeros(ch*dim1).long().view(1, 1, ch, dim1, -1)
-        z2 = torch.zeros(ch*dim2).long().view(1, 1, ch, 1, -1)
+        f1 = torch.from_numpy(np.arange(dim1)).view(1, 1, 1, dim1, 1)
+        f2 = torch.from_numpy(np.arange(dim2)).view(1, 1, 1, 1, dim2)
+        z1 = torch.zeros(ch*dim1).long().view(1, 1, ch, dim1, 1)
+        z2 = torch.zeros(ch*dim2).long().view(1, 1, ch, 1, dim2)
 
         if use_gpu:
             f1 = Variable(f1.cuda())
@@ -123,7 +177,7 @@ class BoxCar(nn.Module):
 
 class BoxCarAuto(nn.Module):
     
-    def __init__(self, ch=3, dim1=299, dim2=299, k=100000, use_gpu=True):
+    def __init__(self, ch=3, dim1=299, dim2=299, k=0.5, use_gpu=True):
         super(BoxCarAuto, self).__init__()
         f1 = torch.from_numpy(np.arange(dim1)).view(1, 1, 1, dim1, -1)
         f2 = torch.from_numpy(np.arange(dim2)).view(1, 1, 1, 1, -1)

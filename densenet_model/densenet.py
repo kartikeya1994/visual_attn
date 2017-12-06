@@ -70,7 +70,7 @@ def densenet121_racnn_gl(weights=None, num_classes=200, glimpse_only=False,
     else:
         base_pretrained = True
     model = DenseNet_RACNN_GL(num_classes=200, base_pretrained=base_pretrained,
-            use_gpu=use_gpu, gap=gap, up=up)
+            use_gpu=use_gpu, gap=gap, up=up, glimpse_only=glimpse_only)
     
     if freeze_conv1:
         for param in model.glimpse.conv1.parameters():
@@ -368,7 +368,8 @@ class DenseNet_RACNN(nn.Module):
 
 class DenseNet_RACNN_GL(nn.Module):
     def __init__(self, num_classes=200, glimpses=2, base_pretrained=True,
-             num_channels=3, use_gpu=True, gap=False, up=True):
+             num_channels=3, use_gpu=True, gap=False, up=True,
+             glimpse_only=False):
         """
         glimpse_only: return glimpses of dim (s, g, x.shape)
         base_pretrained: load Imagenet weights for CNNs
@@ -381,6 +382,7 @@ class DenseNet_RACNN_GL(nn.Module):
         self.g = glimpses # number of glimpses
         self.num_classes = num_classes
         self.num_channels = num_channels
+        self.glimpse_only = glimpse_only
 
         self.glimpse = densenet121_racnn_glimpse_extractor(use_gpu=use_gpu,
                 gap=gap, up=up)
@@ -401,6 +403,9 @@ class DenseNet_RACNN_GL(nn.Module):
         W = x.size(3) # img width
 
         f = self.glimpse(x) 
+        if self.glimpse_only:
+            return f
+        
         f = f.view(s*self.g, self.num_channels, H, W)
         f = self.conv2(f) # (s*g, num_fltrs, d, d)
         f = F.avg_pool2d(f, kernel_size=f.size(2), stride=1) # GAP  

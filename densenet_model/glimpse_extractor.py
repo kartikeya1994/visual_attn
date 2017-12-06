@@ -250,10 +250,10 @@ class DenseNet_RACNN_Glimpse_Extractor(nn.Module):
         
         # compute br_x and br_y
         # clip them to H and W resp
-        f[:, :, 0] = torch.clamp(f[:, :, 0], min=0, max=258)
-        f[:, :, 1] = torch.clamp(f[:, :, 1], min=0, max=258)
-        f[:, :, 2] = torch.clamp(f[:, :, 2], min=40, max=298)
-        f[:, :, 3] = torch.clamp(f[:, :, 3], min=40, max=298)
+        f[:, :, 0] = torch.clamp(f[:, :, 0], min=0, max=98)
+        f[:, :, 1] = torch.clamp(f[:, :, 1], min=0, max=98)
+        f[:, :, 2] = torch.clamp(f[:, :, 2], min=200, max=298)
+        f[:, :, 3] = torch.clamp(f[:, :, 3], min=200, max=298)
 
         f[:, :, 2] = f[:, :, 0] + f[:, :, 2]
         f[:, :, 3] = f[:, :, 1] + f[:, :, 3]

@@ -10,15 +10,10 @@ import time
 class BoxCarFunc(Function):
     
     def h(self, x):
-        k=0.05
+        k=0.1
         return 1.0/(1.0 + torch.exp(-k * x))
-    '''
-    def h_b(self, x):
-        k=0.9
-        return 1.0/(1.0 + np.exp(-k * x))
-    '''
     def diff_h(self, x):
-        k=0.05
+        k=0.1
         return k * torch.exp(-k * x) * self.h(x) ** 2
 
     def forward(self, x, m, f1, f2, use_gpu):
@@ -52,10 +47,10 @@ class BoxCarFunc(Function):
         # dL_dg: (s, g, 3, 299, 299)
         # self.x: (s, 3, 299, 299)
         # self.m: (s, g, 4)
-        dL_dg = torch.abs(dL_dg)
-        max_val = torch.max(dL_dg)
-        if max_val:
-            dL_dg = dL_dg / torch.max(dL_dg) * 0.0000001
+        #dL_dg = torch.abs(dL_dg)
+        #max_val = torch.max(dL_dg)
+        #if max_val:
+        #    dL_dg = dL_dg / torch.max(dL_dg) * 0.0000001
         #print('Max Before:', torch.max(dL_dg), "Min Before: ", torch.min(dL_dg))
         x, M, use_gpu, I, J = self.saved_tensors
         g = M.size(1)
@@ -97,7 +92,7 @@ class BoxCarFunc(Function):
         dL_dm3 = dL_dm3.view(s,g,-1).sum(2)
         
         dL_dm = torch.stack([dL_dm0, dL_dm1, dL_dm2, dL_dm3], dim=2)
-        dL_dm = dL_dm
+        dL_dm = dL_dm * 500
         #print('Max Post:', torch.max(dL_dm), "Min Post: ", torch.min(dL_dm))
         """
         dL_dm = torch.zeros(s, g, 4) # output
@@ -177,7 +172,7 @@ class BoxCar(nn.Module):
 
 class BoxCarAuto(nn.Module):
     
-    def __init__(self, ch=3, dim1=299, dim2=299, k=0.5, use_gpu=True):
+    def __init__(self, ch=3, dim1=299, dim2=299, k=0.1, use_gpu=True):
         super(BoxCarAuto, self).__init__()
         f1 = torch.from_numpy(np.arange(dim1)).view(1, 1, 1, dim1, -1)
         f2 = torch.from_numpy(np.arange(dim2)).view(1, 1, 1, 1, -1)

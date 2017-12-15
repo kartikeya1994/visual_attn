@@ -1,3 +1,4 @@
+import sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -6,6 +7,7 @@ from collections import OrderedDict
 from utils import BoxCar, Upsampler
 __all__ = ['DenseNet', 'densenet121', 'densenet169', 'densenet201', 'densenet161']
 
+stored_denseblock_activations = []
 
 model_urls = {
     'densenet121': 'https://download.pytorch.org/models/densenet121-a639ec97.pth',
@@ -29,13 +31,15 @@ def densenet121(pretrained=False, **kwargs):
     return model
 
 def densenet121_racnn_glimpse_extractor(weights=None, num_classes=200, 
-        freeze_conv1=False, gap=False, use_gpu=True, up=True):
+        freeze_conv1=False, gap=False, use_gpu=True, up=True, glimpse_size=0,
+        skip_con=False):
     if weights is not None:
         base_pretrained = False
     else:
         base_pretrained = True
     model = DenseNet_RACNN_Glimpse_Extractor(num_classes=200,
-            base_pretrained=base_pretrained, use_gpu=use_gpu, up=up)
+            base_pretrained=base_pretrained, use_gpu=use_gpu, up=up,
+            glimpse_size=glimpse_size, skip_con=skip_con)
     
     if freeze_conv1:
         for param in model.conv1.parameters():
@@ -204,9 +208,16 @@ img -> CONV1 -> f -> FC ->   g
         C1    C2   C3
 
 """
+
+
+def store_activations(self, input, output):
+    global stored_denseblock_activations
+    stored_denseblock_activations.append(output)
+
 class DenseNet_RACNN_Glimpse_Extractor(nn.Module):
     def __init__(self, num_classes=200, glimpses=2, base_pretrained=True,
-            num_channels=3, conv_dim = 9, gap=False, use_gpu=True, up=True):
+            num_channels=3, conv_dim = 9, use_gpu=True,
+            up=True, glimpse_size=0, skip_con=False):
         """
         glimpse_only: return glimpses of dim (s, g, x.shape)
         base_pretrained: load Imagenet weights for CNNs
@@ -220,26 +231,43 @@ class DenseNet_RACNN_Glimpse_Extractor(nn.Module):
         self.num_classes = num_classes
         self.num_channels = num_channels
         self.conv_dim = conv_dim
-        self.gap = gap
         self.up = up
-
+        self.glimpse_size = glimpse_size
+        self.skip_con = skip_con
         self.conv1 = densenet121(pretrained=base_pretrained, conv_only=True)
-        if gap:
-            self.glimpse_fc = nn.Linear(self.num_fltrs, self.glimpse_dim * self.g)
+        """
+        Dense blocks: 
+        1 (4, 256, 75, 75)
+        2 (4, 512, 37, 37)
+        3 (4, 1024, 18, 18)
+        4 (4, 1024, 9, 9)
+        """
+        self.skip_concat_dim = 75**2 + 37**2 + 18**2 + 9**2
+        if skip_con:
+            for i in range(4):
+                attr = getattr(self.conv1.features, 'denseblock{}'.format(i+1))
+                attr.register_forward_hook(store_activations)
+            self.glimpse_fc_skip = nn.Linear(self.skip_concat_dim,
+                    self.skip_concat_dim/2)
+            self.glimpse_fc = nn.Linear(self.skip_concat_dim/2, self.glimpse_dim * self.g)
         else:
             self.glimpse_fc = nn.Linear(self.num_fltrs * conv_dim * conv_dim, self.glimpse_dim * self.g)
         
+        #self.batchnorm = nn.BatchNorm1d(self.skip_concat_dim/2)
+
         self.cropper = BoxCar(use_gpu=use_gpu)
         # upsample sz self.upsampler = Upsampler(set_zero=True)
         self.upsampler = Upsampler()
         # delete original fc
         del self.conv1.classifier
     
-    def convert_bb(self, f, H=299, W=299):
+    def convert_bb(self, g, H=299, W=299, glimpse_size=0):
         """
         f: (s, g, 4) tl_x tl_y h w (all btw 0 and 1)
         Network predicts top left corner, width and height
         """
+
+        f = g.clone()
 
         # scale to img dimensions
         # wo clip
@@ -250,14 +278,13 @@ class DenseNet_RACNN_Glimpse_Extractor(nn.Module):
         
         # compute br_x and br_y
         # clip them to H and W resp
-        f[:, :, 0] = torch.clamp(f[:, :, 0], min=0, max=98)
-        f[:, :, 1] = torch.clamp(f[:, :, 1], min=0, max=98)
-        f[:, :, 2] = torch.clamp(f[:, :, 2], min=200, max=298)
-        f[:, :, 3] = torch.clamp(f[:, :, 3], min=200, max=298)
+        f[:, :, 0] = torch.clamp(f[:, :, 0], min=0, max=H-1-glimpse_size)
+        f[:, :, 1] = torch.clamp(f[:, :, 1], min=0, max=W-1-glimpse_size)
+        f[:, :, 2] = torch.clamp(f[:, :, 2], min=glimpse_size, max=H-1)
+        f[:, :, 3] = torch.clamp(f[:, :, 3], min=glimpse_size, max=W-1)
 
-        f[:, :, 2] = f[:, :, 0] + f[:, :, 2]
-        f[:, :, 3] = f[:, :, 1] + f[:, :, 3]
-        f = torch.clamp(f, min = 0, max = 298)
+        f[:, :, 2] = torch.clamp(f[:, :, 0] + f[:, :, 2], min=0, max=H-1)
+        f[:, :, 3] = torch.clamp(f[:, :, 1] + f[:, :, 3], min=0, max=W-1)
 
         return f.long()
 
@@ -267,21 +294,31 @@ class DenseNet_RACNN_Glimpse_Extractor(nn.Module):
         c = x.size(1) # num channels
         H = x.size(2) # img height
         W = x.size(3) # img width
+        
+        global stored_denseblock_activations
 
         f = self.conv1(x) # (s, num_fltrs, d, d)
-        
-        if self.gap:
-            f = F.avg_pool2d(f, kernel_size=f.size(2), stride=1) # GAP  
-            f = f.view(s, self.num_fltrs)
+        if self.skip_con:
+            stored_denseblock_activations = [torch.sum(stored, 1).view(s, -1)
+                    for stored in stored_denseblock_activations]
+            f = torch.cat(stored_denseblock_activations, dim=1)
+            print f
+            stored_denseblock_activations = []
+            f = self.glimpse_fc_skip(f)
+            f = F.relu(f, inplace=True)
+            # f = self.batchnorm(f)
+            # for i, stored_act in enumerate(stored_denseblock_activations):
+            #    print("Stored: ", i, "\n", stored_denseblock_activation.size()) 
         else:
             f = f.view(s, self.num_fltrs * self.conv_dim * self.conv_dim)
         
         f = self.glimpse_fc(f)
-        f = f.view(s, self.g, self.glimpse_dim)
+        # f = self.batchnorm(f)
+        f_raw = f.view(s, self.g, self.glimpse_dim)
         # wo clip f = torch.sigmoid(f) # must be btw 0,1
-        f = self.convert_bb(f)
+        f = self.convert_bb(f_raw, glimpse_size=self.glimpse_size)
         glimpses = self.cropper(x, f) # (s, g, x.shape)
         # upsample sz glimpses = self.upsampler(x, f)
         if self.up:
             glimpses = self.upsampler(glimpses, f)
-        return glimpses
+        return glimpses, f, f_raw
